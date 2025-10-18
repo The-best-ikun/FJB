@@ -96,26 +96,24 @@ class QAPanel {
             return; // 面板已关闭，不做处理
         }
 
-        // 1. 显示用户的问题
-        this._panel.webview.postMessage({ command: 'addMessage', type: 'user', text: question });
-        // 2. 显示加载状态
+        // 1. 显示加载状态（用户消息已在前端添加）
         this._panel.webview.postMessage({ command: 'showLoading' });
 
         try {
-            // 3. 添加用户消息到对话历史
+            // 2. 添加用户消息到对话历史
             this._conversationHistory.push({ role: 'user', content: question });
             
-            // 4. 调用API获取回答，传递完整的对话历史
+            // 3. 调用API获取回答，传递完整的对话历史
             const answer = await this._apiClient.askQuestionWithHistory(this._conversationHistory);
             
-            // 5. 添加助手回答到对话历史
+            // 4. 添加助手回答到对话历史
             this._conversationHistory.push({ role: 'assistant', content: answer });
             
-            // 6. 显示AI的回答
+            // 5. 显示AI的回答
             this._panel.webview.postMessage({ command: 'addMessage', type: 'bot', text: answer });
         } catch (error) {
             vscode.window.showErrorMessage(`API请求失败: ${error.message}`);
-            // 7. 显示错误信息
+            // 6. 显示错误信息
             this._panel.webview.postMessage({ command: 'addError', text: '抱歉，服务暂时无法响应，请稍后再试。' });
         }
     }
@@ -154,8 +152,13 @@ class QAPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://cdnjs.cloudflare.com; script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com;">
     <title>QA Chat</title>
+    <!-- 引入marked.js用于Markdown渲染 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+    <!-- 引入highlight.js用于代码高亮 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; font-family: var(--vscode-font-family); color: var(--vscode-foreground); background-color: var(--vscode-editor-background); height: 100vh; display: flex; flex-direction: column; }
         .chat-container { flex-grow: 1; overflow-y: auto; padding: 10px; }
@@ -165,6 +168,51 @@ class QAPanel {
         .message-content { max-width: 80%; padding: 10px 15px; border-radius: 10px; word-wrap: break-word; }
         .message.user .message-content { background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); }
         .message.bot .message-content { background-color: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
+        
+        /* Markdown样式 */
+        .message-content h1, .message-content h2, .message-content h3, .message-content h4, .message-content h5, .message-content h6 {
+            margin: 10px 0 5px 0;
+            color: var(--vscode-foreground);
+        }
+        .message-content p { margin: 5px 0; line-height: 1.5; }
+        .message-content ul, .message-content ol { margin: 5px 0; padding-left: 20px; }
+        .message-content li { margin: 2px 0; }
+        .message-content blockquote { 
+            margin: 10px 0; 
+            padding: 10px; 
+            border-left: 3px solid var(--vscode-button-background); 
+            background-color: var(--vscode-editor-background); 
+        }
+        .message-content code { 
+            background-color: var(--vscode-editor-background); 
+            padding: 2px 4px; 
+            border-radius: 3px; 
+            font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+        }
+        .message-content pre { 
+            background-color: var(--vscode-editor-background); 
+            padding: 10px; 
+            border-radius: 5px; 
+            overflow-x: auto; 
+            margin: 10px 0;
+        }
+        .message-content pre code { 
+            background: none; 
+            padding: 0; 
+        }
+        .message-content table { 
+            border-collapse: collapse; 
+            width: 100%; 
+            margin: 10px 0; 
+        }
+        .message-content th, .message-content td { 
+            border: 1px solid var(--vscode-input-border); 
+            padding: 8px; 
+            text-align: left; 
+        }
+        .message-content th { 
+            background-color: var(--vscode-input-background); 
+        }
         .loading { font-style: italic; color: var(--vscode-descriptionForeground); }
         .error { color: var(--vscode-errorForeground); }
         .input-container { display: flex; padding: 10px; border-top: 1px solid var(--vscode-panel-border); }
@@ -208,7 +256,19 @@ class QAPanel {
             messageDiv.className = \`message \${type}\`;
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
-            contentDiv.textContent = text;
+            
+            // 如果是bot消息，使用Markdown渲染
+            if (type === 'bot') {
+                contentDiv.innerHTML = marked.parse(text);
+                // 高亮代码块
+                contentDiv.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            } else {
+                // 用户消息保持纯文本
+                contentDiv.textContent = text;
+            }
+            
             messageDiv.appendChild(contentDiv);
             chatContainer.appendChild(messageDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -249,7 +309,7 @@ class QAPanel {
             questionInput.value = '';
             askButton.disabled = true;
 
-            // 通知后端
+            // 通知后端（不重复添加用户消息）
             vscode.postMessage({ command: 'askQuestion', text: question });
         }
 
@@ -265,10 +325,13 @@ class QAPanel {
             const message = event.data;
             switch (message.command) {
                 case 'addMessage':
-                    history.push({ type: message.type, text: message.text });
-                    hideLoadingUI();
-                    addMessageToUI(message.type, message.text);
-                    askButton.disabled = false;
+                    // 只添加bot消息，避免重复添加用户消息
+                    if (message.type === 'bot') {
+                        history.push({ type: message.type, text: message.text });
+                        hideLoadingUI();
+                        addMessageToUI(message.type, message.text);
+                        askButton.disabled = false;
+                    }
                     break;
                 case 'showLoading':
                     showLoadingUI();
