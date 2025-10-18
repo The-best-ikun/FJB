@@ -28,7 +28,7 @@ LLM服务(OpenAI/Anthropic/本地模型)
 - 📚 **向量数据库**: 使用ChromaDB存储代码文档向量
 - 🔧 **多语言支持**: 支持Python、JavaScript、TypeScript、Java、C++、Go、Rust等
 
-## 项目结构
+## 项目结构（该项目前端结构已修改为纯JavaScript进行逻辑实现）
 
 ```
 FJB/
