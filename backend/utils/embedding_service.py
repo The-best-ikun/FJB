@@ -43,6 +43,7 @@ class EmbeddingService:
         try:
             if SENTENCE_TRANSFORMERS_AVAILABLE:
                 logger.info(f"正在加载嵌入模型: {self.model_name}")
+                print(f"正在加载嵌入模型: {self.model_name}")
                 # 对 CodeBERT 手动构建模块：Transformer + Pooling(CLS)
                 if 'codebert' in self.model_name.lower():
                     from sentence_transformers import SentenceTransformer, models
@@ -83,14 +84,21 @@ class EmbeddingService:
             if self.model:
                 # 使用sentence-transformers生成嵌入
                 embedding = self.model.encode(text)
-                return embedding.tolist()
+                emb_list = embedding.tolist()
             else:
                 # 使用简单的嵌入方法
-                return self._simple_embed(text)
+                emb_list = self._simple_embed(text)
+
+            # 记录嵌入维度和是否为零向量的诊断信息（不打印完整向量以免过长）
+            is_zero = all(v == 0.0 for v in emb_list)
+            logger.info(f"生成嵌入: dim={len(emb_list)}, zero={is_zero}")
+            return emb_list
         except Exception as e:
             logger.error(f"生成嵌入向量失败: {e}")
             # 返回零向量作为后备
-            return [0.0] * self.dimension
+            zero_vec = [0.0] * self.dimension
+            logger.info(f"使用零向量作为后备: dim={len(zero_vec)}")
+            return zero_vec
     
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """

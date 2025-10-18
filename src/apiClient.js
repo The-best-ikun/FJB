@@ -114,6 +114,32 @@ class ApiClient {
     }
 
     /**
+     * 索引代码库到向量数据库
+     * @param {string} workspacePath 工作区路径
+     * @param {Array} codeFiles 代码文件列表
+     */
+    async indexCodebase(workspacePath, codeFiles) {
+        try {
+            // 诊断日志：打印要发送的 payload（只打印前 3 个文件以免过长）
+            try {
+                console.log('indexCodebase: payload sample', { workspacePath, codeFilesSample: codeFiles.slice(0, 3) });
+            } catch (e) {
+                console.warn('indexCodebase: 无法打印 payload 样例', e);
+            }
+
+            const response = await this.client.post('/api/index-codebase', {
+                workspacePath,
+                codeFiles
+            });
+            
+            return response.data;
+        } catch (error) {
+            console.error('代码库索引请求失败:', error);
+            throw new Error('代码库索引服务暂时不可用，请稍后重试');
+        }
+    }
+
+    /**
      * 更新后端服务URL
      * @param {string} newURL 新的后端服务URL
      */

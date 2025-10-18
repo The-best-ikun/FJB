@@ -32,6 +32,8 @@ class VectorDatabase:
         # Embedding service 注入（优先使用外部服务）
         self.embedding_service = embedding_service
 
+        
+
         # 原始 CodeBERT 初始化逻辑已注释（保留以便回退或调试）
         # try:
         #     import torch
@@ -177,31 +179,31 @@ class VectorDatabase:
                 embeddings=[embedding],
                 metadatas=[metadata]
             )
-            
+
             logger.info(f"文档更新成功: {doc_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"更新文档失败: {e}")
             return False
-    
+
     async def delete_document(self, doc_id: str) -> bool:
         """
         删除文档
-        
+
         Args:
             doc_id: 文档ID
-            
+
         Returns:
             bool: 是否成功删除
         """
         try:
             # 删除文档
             self.collection.delete(ids=[doc_id])
-            
+
             logger.info(f"文档删除成功: {doc_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"删除文档失败: {e}")
             return False
@@ -450,3 +452,123 @@ class VectorDatabase:
             logger.error(f"生成嵌入时出错: {e}")
             dim = self._embedding_dim or 384
             return [0.0] * dim
+    
+    async def index_codebase_with_files(self, workspace_path: str, code_files: List[Dict[str, Any]]):
+        """
+        使用提供的文件列表索引代码库
+        
+        Args:
+            workspace_path: 工作区路径
+            code_files: 代码文件列表，每个元素包含path, relativePath, extension, size
+        """
+        try:
+            logger.info(f"开始索引代码库: {workspace_path}, 文件数量: {len(code_files)}")
+
+            # 打印收到的第一个元素类型，便于诊断前端是否传入了 Pydantic 模型对象
+            if code_files and len(code_files) > 0:
+                try:
+                    sample = code_files[0]
+                    logger.info(f"收到 code_files 首元素类型: {type(sample)}, repr_sample: {repr(sample)[:200]}")
+                except Exception:
+                    pass
+
+            # 安全访问器，支持 dict 或具有属性的对象（例如 Pydantic BaseModel）
+            def _get_field(obj, key, default=None):
+                if obj is None:
+                    return default
+                if isinstance(obj, dict):
+                    return obj.get(key, default)
+                # 允许访问驼峰或小写属性名
+                if hasattr(obj, key):
+                    return getattr(obj, key)
+                # 尝试小写首字母访问（relativePath -> relative_path）
+                alt = key[0].lower() + key[1:] if len(key) > 1 else key.lower()
+                if hasattr(obj, alt):
+                    return getattr(obj, alt)
+                # 尝试 dict-like .dict() for pydantic
+                if hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+                    try:
+                        return obj.dict().get(key, obj.dict().get(alt, default))
+                    except Exception:
+                        pass
+                return default
+
+            indexed_files = 0
+            failed_files = 0
+
+            for file_info in code_files:
+                try:
+                    file_path = _get_field(file_info, 'path')
+                    relative_path = _get_field(file_info, 'relativePath') or _get_field(file_info, 'relative_path')
+                    extension = _get_field(file_info, 'extension')
+                    file_size = _get_field(file_info, 'size')
+
+                    # 如果必要字段缺失，记录并跳过
+                    if not file_path:
+                        logger.warning(f"跳过无效的 file_info 条目（缺少 path）：{repr(file_info)[:200]}")
+                        failed_files += 1
+                        continue
+                    
+                    # 跳过过大的文件（超过1MB）
+                    if file_size > 1024 * 1024:
+                        logger.warning(f"跳过过大文件: {relative_path} ({file_size} bytes)")
+                        continue
+                    
+                    # 读取文件内容
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
+                    # 跳过空文件
+                    if not content.strip():
+                        continue
+                    
+                    # 创建元数据
+                    metadata = {
+                        'source': relative_path,
+                        'type': 'code_file',
+                        'extension': extension,
+                        'size': file_size,
+                        'workspace': workspace_path
+                    }
+                    
+                    # 生成嵌入向量
+                    embedding = None
+                    if self.embedding_service:
+                        try:
+                            import asyncio, inspect
+                            if inspect.iscoroutinefunction(self.embedding_service.embed_text):
+                                embedding = await self.embedding_service.embed_text(content)
+                            else:
+                                embedding = self.embedding_service.embed_text(content)
+                        except Exception as e:
+                            logger.warning(f"使用外部嵌入服务失败: {e}")
+                            embedding = None
+                    
+                    # 如果没有外部嵌入服务，使用占位符
+                    if embedding is None:
+                        embedding = [0.0] * 768  # 默认维度
+                    
+                    # 添加到向量数据库
+                    success = await self.add_document(
+                        content=content,
+                        embedding=embedding,
+                        metadata=metadata
+                    )
+                    
+                    if success:
+                        indexed_files += 1
+                        if indexed_files % 10 == 0:
+                            logger.info(f"已索引 {indexed_files} 个文件...")
+                    else:
+                        failed_files += 1
+                except Exception as e:
+                    rel = _get_field(file_info, 'relativePath') or _get_field(file_info, 'relative_path') or 'unknown'
+                    logger.warning(f"索引文件失败 {rel}: {e}")
+                    failed_files += 1
+            
+            logger.info(f"代码库索引完成: 成功 {indexed_files} 个，失败 {failed_files} 个")
+            return True
+            
+        except Exception as e:
+            logger.error(f"索引代码库失败: {e}")
+            return False

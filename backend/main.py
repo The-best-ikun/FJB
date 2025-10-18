@@ -90,6 +90,18 @@ class DocResponse(BaseModel):
     timestamp: str
     language: str
 
+class CodeFile(BaseModel):
+    """代码文件模型"""
+    path: str
+    relativePath: str
+    extension: str
+    size: int
+
+class CodebaseIndexRequest(BaseModel):
+    """代码库索引请求模型"""
+    workspacePath: str
+    codeFiles: List[CodeFile]
+
 class HealthResponse(BaseModel):
     """健康检查响应模型"""
     status: str
@@ -258,7 +270,7 @@ async def generate_documentation(request: DocRequest):
         raise HTTPException(status_code=500, detail=f"文档生成服务错误: {str(e)}")
 
 @app.post("/api/index-codebase")
-async def index_codebase(background_tasks: BackgroundTasks, codebase_path: str):
+async def index_codebase(request: CodebaseIndexRequest, background_tasks: BackgroundTasks):
     """
     代码库索引接口
     将代码库内容索引到向量数据库中
@@ -267,15 +279,20 @@ async def index_codebase(background_tasks: BackgroundTasks, codebase_path: str):
         raise HTTPException(status_code=503, detail="向量数据库未初始化")
     
     try:
-        logger.info(f"开始索引代码库: {codebase_path}")
+        logger.info(f"开始索引代码库: {request.workspacePath}, 文件数量: {len(request.codeFiles)}")
         
         # 在后台任务中执行索引
         background_tasks.add_task(
-            vector_db.index_codebase,
-            codebase_path
+            vector_db.index_codebase_with_files,
+            request.workspacePath,
+            request.codeFiles
         )
         
-        return {"message": "代码库索引任务已启动", "status": "processing"}
+        return {
+            "message": f"代码库索引任务已启动，共 {len(request.codeFiles)} 个文件",
+            "status": "processing",
+            "fileCount": len(request.codeFiles)
+        }
         
     except Exception as e:
         logger.error(f"代码库索引失败: {e}")

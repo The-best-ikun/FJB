@@ -11,7 +11,8 @@
   ],
   "activationEvents": [
     "onCommand:codebase-qa-doc-generator.askQuestion",
-    "onCommand:codebase-qa-doc-generator.generateDoc"
+    "onCommand:codebase-qa-doc-generator.generateDoc",
+    "onCommand:codebase-qa-doc-generator.reindexCodebase"
   ],
   "main": "./src/extension.js",
   "contributes": {
@@ -23,6 +24,10 @@
       {
         "command": "codebase-qa-doc-generator.generateDoc",
         "title": "生成文档"
+      },
+      {
+        "command": "codebase-qa-doc-generator.reindexCodebase",
+        "title": "哈哈重新索引代码库"
       }
     ]
   },
