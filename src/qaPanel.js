@@ -14,6 +14,7 @@ class QAPanel {
         this._extensionUri = extensionUri;
         this._apiClient = apiClient;
         this._panel = undefined; // 使用 _panel 来遵循私有属性约定
+        this._conversationHistory = []; // 存储对话历史
     }
 
     /**
@@ -48,6 +49,10 @@ class QAPanel {
         // 设置面板的初始HTML内容
         this._panel.webview.html = this._getWebviewContent(this._panel.webview);
 
+        // 恢复对话历史
+        const savedHistory = this._panel.webview.state?.conversationHistory || [];
+        this._conversationHistory = savedHistory;
+
         // 消息处理：接收来自Webview的消息
         this._panel.webview.onDidReceiveMessage(
             message => {
@@ -68,6 +73,13 @@ class QAPanel {
         // 面板被用户关闭时的事件处理
         this._panel.onDidDispose(
             () => {
+                // 保存对话历史到状态中
+                if (this._panel && this._conversationHistory.length > 0) {
+                    this._panel.webview.state = { 
+                        ...this._panel.webview.state,
+                        conversationHistory: this._conversationHistory 
+                    };
+                }
                 this._panel = undefined;
             },
             null,
@@ -90,13 +102,20 @@ class QAPanel {
         this._panel.webview.postMessage({ command: 'showLoading' });
 
         try {
-            // 3. 调用API获取回答（修正拼写 askQuestion）
-            const answer = await this._apiClient.askQuestion(question, 'VSCode插件');
-            // 4. 显示AI的回答
+            // 3. 添加用户消息到对话历史
+            this._conversationHistory.push({ role: 'user', content: question });
+            
+            // 4. 调用API获取回答，传递完整的对话历史
+            const answer = await this._apiClient.askQuestionWithHistory(this._conversationHistory);
+            
+            // 5. 添加助手回答到对话历史
+            this._conversationHistory.push({ role: 'assistant', content: answer });
+            
+            // 6. 显示AI的回答
             this._panel.webview.postMessage({ command: 'addMessage', type: 'bot', text: answer });
         } catch (error) {
             vscode.window.showErrorMessage(`API请求失败: ${error.message}`);
-            // 5. 显示错误信息
+            // 7. 显示错误信息
             this._panel.webview.postMessage({ command: 'addError', text: '抱歉，服务暂时无法响应，请稍后再试。' });
         }
     }
@@ -108,6 +127,8 @@ class QAPanel {
         if (!this._panel) {
             return;
         }
+        // 清空对话历史
+        this._conversationHistory = [];
         // 更新面板的 state 为空数组，这会触发序列化
         this._panel.webview.state = { history: [] };
         // 通知前端清空显示

@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 from services.rag_engine import RAGEngine
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,45 @@ class QAService:
             
         except Exception as e:
             logger.error(f"处理问题时出错: {e}")
+            # 返回错误提示
+            return f"抱歉，处理您的问题时出现了错误: {str(e)}", []
+    
+    async def ask_question_with_history(self, conversation_history: List[Dict[str, str]]) -> Tuple[str, List[str]]:
+        """
+        使用对话历史处理用户问题，返回答案和相关来源
+        
+        Args:
+            conversation_history: 完整的对话历史，每个元素包含role和content
+            
+        Returns:
+            Tuple[str, List[str]]: (答案, 来源列表)
+        """
+        try:
+            logger.info(f"处理对话历史问题，历史消息数: {len(conversation_history)}")
+            
+            # 获取最后一个用户消息作为当前问题
+            current_question = None
+            for msg in reversed(conversation_history):
+                if msg.get("role") == "user":
+                    current_question = msg.get("content", "")
+                    break
+            
+            if not current_question:
+                return "请提供您的问题。", []
+            
+            # 使用RAG引擎处理对话历史
+            answer, sources = await self.rag_engine.query_with_history(conversation_history)
+            
+            # 如果没有找到相关答案，返回默认回复
+            if not answer or answer.strip() == "":
+                answer = self._get_default_answer(current_question)
+                sources = []
+            
+            logger.info(f"对话历史问题处理完成，答案长度: {len(answer)}")
+            return answer, sources
+            
+        except Exception as e:
+            logger.error(f"处理对话历史问题时出错: {e}")
             # 返回错误提示
             return f"抱歉，处理您的问题时出现了错误: {str(e)}", []
     # 无法处理问题时返回默认答案

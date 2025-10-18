@@ -66,8 +66,11 @@ class RAGEngine:
                 # 对于常识性或无需上下文的问题，直接调用LLM进行回答更合适。
                 logger.info("未找到相关文档，改为直接调用LLM生成回答")
                 try:
-                    prompt = f"请直接回答以下问题：\n\n{question}\n\n请用中文，尽量简明扼要。"
-                    answer = await self.llm_service.generate_text(prompt)
+                    messages = [
+                        {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
+                        {"role": "user", "content": f"请直接回答以下问题：\n\n{question}\n\n请用中文，尽量简明扼要。"}
+                    ]
+                    answer = await self.llm_service.generate_text(messages)
                     return answer, []
                 except Exception as e:
                     logger.error(f"直接调用LLM回答失败: {e}")
@@ -87,6 +90,64 @@ class RAGEngine:
             
         except Exception as e:
             logger.error(f"RAG查询处理失败: {e}")
+            return f"处理查询时出现错误: {str(e)}", []
+    
+    async def query_with_history(self, conversation_history: List[Dict[str, str]], top_k: int = 5) -> Tuple[str, List[str]]:
+        """
+        使用对话历史处理用户查询，返回答案和相关来源
+        
+        Args:
+            conversation_history: 完整的对话历史，每个元素包含role和content
+            top_k: 检索的相关文档数量
+            
+        Returns:
+            Tuple[str, List[str]]: (答案, 来源列表)
+        """
+        try:
+            logger.info(f"处理RAG对话历史查询，历史消息数: {len(conversation_history)}")
+            
+            # 获取最后一个用户消息作为当前问题
+            current_question = None
+            for msg in reversed(conversation_history):
+                if msg.get("role") == "user":
+                    current_question = msg.get("content", "")
+                    break
+            
+            if not current_question:
+                return "请提供您的问题。", []
+            
+            # 1. 检索相关文档（基于当前问题）
+            relevant_docs = await self._retrieve_relevant_documents(current_question, top_k)
+            
+            if not relevant_docs:
+                # 如果检索不到相关文档，直接使用LLM基于对话历史回答
+                logger.info("未找到相关文档，使用对话历史直接调用LLM生成回答")
+                try:
+                    answer = await self.llm_service.generate_text(conversation_history)
+                    return answer, []
+                except Exception as e:
+                    logger.error(f"直接调用LLM回答失败: {e}")
+                    return "抱歉，无法回答您的问题。", []
+            
+            # 2. 构建上下文
+            context = self._build_context(relevant_docs)
+            
+            # 3. 构建包含对话历史和上下文的完整消息
+            messages = [
+                {"role": "system", "content": f"你是一个专业的代码助手，请基于以下相关信息回答用户的问题。\n\n{context}"},
+            ] + conversation_history
+            
+            # 4. 生成答案
+            answer = await self.llm_service.generate_text(messages)
+            
+            # 5. 提取来源信息
+            sources = self._extract_sources(relevant_docs)
+            
+            logger.info(f"RAG对话历史查询完成，答案长度: {len(answer)}")
+            return answer, sources
+            
+        except Exception as e:
+            logger.error(f"RAG对话历史查询处理失败: {e}")
             return f"处理查询时出现错误: {str(e)}", []
     
     async def _retrieve_relevant_documents(self, question: str, top_k: int) -> List[Dict[str, Any]]:
@@ -152,32 +213,10 @@ class RAGEngine:
             str: 生成的答案
         """
         try:
-            # 构建提示词
-            prompt = self._build_prompt(question, context)
-            
-            # 使用LLM生成答案
-            answer = await self.llm_service.generate_text(prompt)
-            
-            return answer
-            
-        except Exception as e:
-            logger.error(f"生成答案失败: {e}")
-            return "抱歉，生成答案时出现了错误。"
-    
-    def _build_prompt(self, question: str, context: str) -> str:
-        """
-        构建LLM提示词
-        
-        Args:
-            question: 用户问题
-            context: 上下文信息
-            
-        Returns:
-            str: 构建的提示词
-        """
-        prompt = f"""你是一个专业的代码助手，请基于以下相关信息回答用户的问题。
-
-{context}
+            # 构建对话消息
+            messages = [
+                {"role": "system", "content": "你是一个专业的代码助手，请基于以下相关信息回答用户的问题。"},
+                {"role": "user", "content": f"""{context}
 
 用户问题：{question}
 
@@ -188,9 +227,18 @@ class RAGEngine:
 4. 如果涉及代码，请提供清晰的示例
 5. 使用中文回答
 
-答案："""
-        
-        return prompt
+答案："""}
+            ]
+            
+            # 使用LLM生成答案
+            answer = await self.llm_service.generate_text(messages)
+            
+            return answer
+            
+        except Exception as e:
+            logger.error(f"生成答案失败: {e}")
+            return "抱歉，生成答案时出现了错误。"
+    
     
     def _extract_sources(self, documents: List[Dict[str, Any]]) -> List[str]:
         """

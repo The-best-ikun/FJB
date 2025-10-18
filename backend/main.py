@@ -6,7 +6,7 @@ FastAPI后端服务主文件
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import os
 import uvicorn
 import logging
@@ -63,6 +63,15 @@ class QuestionRequest(BaseModel):
     """问答请求模型"""
     question: str
     context: Optional[str] = None
+
+class ConversationMessage(BaseModel):
+    """对话消息模型"""
+    role: str  # "system", "user", "assistant"
+    content: str
+
+class ConversationRequest(BaseModel):
+    """对话历史请求模型"""
+    conversationHistory: List[ConversationMessage]
 
 class QuestionResponse(BaseModel):
     """问答响应模型"""
@@ -183,6 +192,39 @@ async def ask_question(request: QuestionRequest):
         
     except Exception as e:
         logger.error(f"问答请求处理失败: {e}")
+        raise HTTPException(status_code=500, detail=f"问答服务错误: {str(e)}")
+
+@app.post("/api/ask-with-history", response_model=QuestionResponse)
+async def ask_question_with_history(request: ConversationRequest):
+    """
+    支持对话历史的问答接口
+    接收完整的对话历史，返回智能回答
+    """
+    if not qa_service:
+        raise HTTPException(status_code=503, detail="问答服务未初始化")
+    
+    try:
+        logger.info(f"收到对话历史问答请求，历史消息数: {len(request.conversationHistory)}")
+        
+        # 将对话历史转换为字典格式
+        conversation_history = [
+            {"role": msg.role, "content": msg.content} 
+            for msg in request.conversationHistory
+        ]
+        
+        # 调用问答服务的新方法（需要先在QAService中添加）
+        answer, sources = await qa_service.ask_question_with_history(conversation_history)
+        
+        logger.info("对话历史问答请求处理完成")
+        
+        return QuestionResponse(
+            answer=answer,
+            timestamp=datetime.now().isoformat(),
+            sources=sources
+        )
+        
+    except Exception as e:
+        logger.error(f"对话历史问答请求处理失败: {e}")
         raise HTTPException(status_code=500, detail=f"问答服务错误: {str(e)}")
 
 @app.post("/api/generate-doc", response_model=DocResponse)

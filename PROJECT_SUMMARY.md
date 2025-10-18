@@ -4,7 +4,7 @@
 
 本项目成功实现了一个完整的VSCode插件系统，具备智能问答和文档生成功能。项目采用现代化的技术架构，前后端分离设计，支持多种编程语言和LLM服务。
 
-## 🏗️ 技术架构
+## 🏗️ 技术架构（后改为纯JavaScript）
 
 ```
 VSCode插件(JavaScript/TypeScript)
@@ -93,7 +93,7 @@ FJB/
 ### 支持的语言和模型
 - **编程语言**: Python, JavaScript, TypeScript, Java, C++, C, Go, Rust
 - **LLM服务**: OpenAI GPT, Anthropic Claude, 本地Transformers模型
-- **嵌入模型**: all-MiniLM-L6-v2 (可配置)
+- **嵌入模型**: code-bert(可配置)
 
 ## 🚀 快速开始
 

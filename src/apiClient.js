@@ -47,7 +47,24 @@ class ApiClient {
     }
 
     /**
-     * 发送问答请求到后端
+     * 发送问答请求到后端（支持对话历史）
+     * @param {Array} conversationHistory 对话历史数组，每个元素包含role和content
+     */
+    async askQuestionWithHistory(conversationHistory) {
+        try {
+            const response = await this.client.post('/api/ask-with-history', {
+                conversationHistory
+            });
+            
+            return response.data.answer;
+        } catch (error) {
+            console.error('问答请求失败:', error);
+            throw new Error('问答服务暂时不可用，请稍后重试');
+        }
+    }
+
+    /**
+     * 发送问答请求到后端（保持向后兼容）
      * @param {string} question 用户问题
      * @param {string} context 可选的上下文信息（如当前文件路径）
      */

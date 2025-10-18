@@ -9,7 +9,7 @@ import json
 import asyncio
 from urllib import request as urllib_request
 from urllib import error as urllib_error
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 
 # 尝试导入不同的LLM库
@@ -42,8 +42,17 @@ class LLMProvider(ABC):
     """LLM提供者抽象基类"""
     
     @abstractmethod
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
-        """生成文本"""
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
+        """
+        生成文本
+        
+        Args:
+            messages: 对话历史列表，每个元素包含role和content
+            max_tokens: 最大令牌数
+            
+        Returns:
+            str: 生成的文本
+        """
         pass
     
     @abstractmethod
@@ -77,15 +86,16 @@ class OpenAIProvider(LLMProvider):
         self.client = openai.OpenAI(api_key=self.api_key)
         logger.info(f"OpenAI提供者初始化完成，模型: {self.model}")
     
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         """使用OpenAI生成文本"""
         try:
+            # 确保有系统消息
+            if not messages or messages[0].get("role") != "system":
+                messages = [{"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"}] + messages
+            
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
-                    {"role": "user", "content": prompt}
-                ],
+                messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7
             )
@@ -123,16 +133,32 @@ class AnthropicProvider(LLMProvider):
         self.client = anthropic.Anthropic(api_key=self.api_key)
         logger.info(f"Anthropic提供者初始化完成，模型: {self.model}")
     
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         """使用Anthropic生成文本"""
         try:
+            # Anthropic需要过滤掉system消息，因为它不支持system role
+            anthropic_messages = []
+            system_message = None
+            
+            for msg in messages:
+                if msg.get("role") == "system":
+                    system_message = msg.get("content", "")
+                elif msg.get("role") in ["user", "assistant"]:
+                    anthropic_messages.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+            
+            # 如果没有系统消息，使用默认的
+            if not system_message:
+                system_message = "你是一个专业的代码助手，擅长分析和解释代码。"
+            
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
                 temperature=0.7,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                system=system_message,
+                messages=anthropic_messages
             )
             
             return response.content[0].text.strip()
@@ -179,16 +205,17 @@ class DeepSeekHTTPProvider(LLMProvider):
         self.initialized = True
         logger.info(f"DeepSeek(HTTP) 提供者初始化完成，模型: {self.model}")
 
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         if not self.initialized:
             raise RuntimeError("DeepSeek(HTTP) 提供者未初始化")
 
+        # 确保有系统消息
+        if not messages or messages[0].get("role") != "system":
+            messages = [{"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"}] + messages
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.7,
         }
@@ -278,16 +305,17 @@ class QingYanHTTPProvider(LLMProvider):
         logger.info(f"QingYan(HTTP) 提供者初始化完成，模型: {self.model}")
         print(f"QingYan(HTTP) 提供者初始化完成，模型: {self.model}")
 
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         if not self.initialized:
             raise RuntimeError("QingYan(HTTP) 提供者未初始化")
 
+        # 确认是不是第一次对话，如果系统消息为空，则使用默认的系统消息
+        if not messages or messages[0].get("role") != "system":
+            messages = [{"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"}] + messages
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "temperature": 0.7,
         }
 
@@ -394,12 +422,27 @@ class LocalProvider(LLMProvider):
             logger.error(f"本地模型初始化失败: {e}")
             raise
     
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         """使用本地模型生成文本"""
         try:
+            # 将对话历史转换为单个文本提示
+            prompt_parts = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "system":
+                    prompt_parts.append(f"系统: {content}")
+                elif role == "user":
+                    prompt_parts.append(f"用户: {content}")
+                elif role == "assistant":
+                    prompt_parts.append(f"助手: {content}")
+            
+            # 组合所有消息
+            full_prompt = "\n".join(prompt_parts) + "\n助手:"
+            
             # 使用管道生成文本
             result = self.pipeline(
-                prompt,
+                full_prompt,
                 max_length=min(max_tokens, 512),
                 num_return_sequences=1,
                 pad_token_id=self.tokenizer.eos_token_id
@@ -409,8 +452,8 @@ class LocalProvider(LLMProvider):
             generated_text = result[0]['generated_text']
             
             # 移除原始提示，只返回生成的部分
-            if generated_text.startswith(prompt):
-                generated_text = generated_text[len(prompt):].strip()
+            if generated_text.startswith(full_prompt):
+                generated_text = generated_text[len(full_prompt):].strip()
             
             return generated_text
             
@@ -483,12 +526,12 @@ class LLMService:
             logger.error(f"LLM服务初始化失败: {e}")
             raise
     
-    async def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def generate_text(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> str:
         """
         生成文本
         
         Args:
-            prompt: 输入提示
+            messages: 对话历史列表，每个元素包含role和content
             max_tokens: 最大令牌数
             
         Returns:
@@ -497,7 +540,20 @@ class LLMService:
         if not self.provider:
             raise RuntimeError("LLM服务未初始化")
         
-        return await self.provider.generate_text(prompt, max_tokens)
+        return await self.provider.generate_text(messages, max_tokens)
+    
+    async def generate_text_with_history(self, conversation_history: List[Dict[str, str]], max_tokens: int = 1000) -> str:
+        """
+        使用对话历史生成文本（别名方法，为了更清晰的语义）
+        
+        Args:
+            conversation_history: 完整的对话历史，包含system、user、assistant消息
+            max_tokens: 最大令牌数
+            
+        Returns:
+            str: 生成的文本
+        """
+        return await self.generate_text(conversation_history, max_tokens)
     
     async def generate_code_explanation(self, code: str, language: str) -> str:
         """
@@ -510,8 +566,10 @@ class LLMService:
         Returns:
             str: 代码解释
         """
-        # 构建基本提示词
-        prompt = f"""请解释以下{language}代码的功能和实现原理：
+        # 构建对话消息
+        messages = [
+            {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
+            {"role": "user", "content": f"""请解释以下{language}代码的功能和实现原理：
 
 ```{language}
 {code}
@@ -520,9 +578,10 @@ class LLMService:
 请提供：
 1. 代码的主要功能
 2. 关键实现细节
-3. 可能的改进建议"""
+3. 可能的改进建议"""}
+        ]
         
-        return await self.generate_text(prompt)
+        return await self.generate_text(messages)
     
     async def generate_documentation(self, code: str, language: str) -> str:
         """
@@ -535,7 +594,9 @@ class LLMService:
         Returns:
             str: 生成的文档
         """
-        prompt = f"""请为以下{language}代码生成详细的文档：
+        messages = [
+            {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
+            {"role": "user", "content": f"""请为以下{language}代码生成详细的文档：
 
 ```{language}
 {code}
@@ -546,9 +607,10 @@ class LLMService:
 2. 参数说明
 3. 返回值说明
 4. 使用示例
-5. 注意事项"""
+5. 注意事项"""}
+        ]
         
-        return await self.generate_text(prompt)
+        return await self.generate_text(messages)
     
     async def answer_question(self, question: str, context: str) -> str:
         """
@@ -561,15 +623,18 @@ class LLMService:
         Returns:
             str: 答案
         """
-        prompt = f"""基于以下信息回答用户的问题：
+        messages = [
+            {"role": "system", "content": "你是一个专业的代码助手，擅长分析和解释代码。"},
+            {"role": "user", "content": f"""基于以下信息回答用户的问题：
 
 {context}
 
 用户问题：{question}
 
-请提供准确、详细的答案。"""
+请提供准确、详细的答案。"""}
+        ]
         
-        return await self.generate_text(prompt)
+        return await self.generate_text(messages)
     
     async def get_stats(self) -> Dict[str, Any]:
         """获取LLM服务统计信息"""
